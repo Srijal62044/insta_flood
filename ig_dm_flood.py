@@ -47,13 +47,23 @@ def login(username: str, password: str, sessionid: str):
     except:
         pass
 
-    print("[*] sessionid se login kar raha hoon...")
+    # naya username/password login (2FA support ke saath)
+    print("[*] username/password se login kar raha hoon...")
     try:
-        cl.login_by_sessionid(sessionid)
+        try:
+            cl.login(username, password)
+        except Exception as e:
+            if "two-factor" in str(e).lower() or "verification_code" in str(e).lower():
+                print("[!] 2FA verification required!")
+                code = input("Enter OTP: ").strip()
+                cl.login(username, password, verification_code=code)
+            else:
+                raise e
+
         cl.dump_settings(SESSION_FILE)
         print("[+] login successful + session saved")
     except Exception as e:
-        print(f"[-] sessionid login fail: {e}")
+        print(f"[-] login fail: {e}")
         sys.exit(1)
 
 def resolve_user(username: str):
@@ -148,11 +158,7 @@ def main():
 
     username = input("Username: ").strip()
     password = getpass.getpass("Password: ")
-    sessionid = input("SessionID: ").strip()
-
-    if not sessionid:
-        print("[-] SessionID zaroori hai")
-        sys.exit(1)
+    sessionid = input("SessionID (optional, enter to skip): ").strip()
 
     login(username, password, sessionid)
 
